@@ -1,7 +1,8 @@
+
 -- ==========================================
--- AOMHUB | MASTER EDITION V10.0
+-- AOMHUB | MASTER EDITION V10.0 (STABLE)
 -- Special Author: XuwuLBk60596 (AOM)
--- Status: Wallbang Bypass | Item ESP Integrated | Smooth Underground | Anti-Lock Fixed | Jump Added
+-- Status: Wallbang Bypass | Item ESP | Magnet FIXED (New Logic) | No-Key for Whitelist
 -- ==========================================
 
 local Players = game:GetService("Players")
@@ -13,14 +14,45 @@ local Debris = game:GetService("Debris")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
+-- ==========================================
+-- [ 🛡️ LAYER 0: ANTI-BAN SHIELD & SPOOFING ]
+-- ==========================================
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    if not checkcaller() then
+        if method == "Kick" and self == LocalPlayer then 
+            return nil 
+        end
+        if method == "FireServer" then
+            local remoteName = tostring(self)
+            local Blacklisted = {"AntiCheat", "CheckPhysics", "Detection", "BanRemote", "LogService", "CheatDetect", "ReportHistory", "ClientCheck"}
+            for _, name in pairs(Blacklisted) do
+                if remoteName:find(name) then return nil end
+            end
+        end
+    end
+    return oldNamecall(self, ...)
+end))
+
+local oldIndex
+oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, index)
+    if not checkcaller() and self:IsA("Humanoid") then
+        if index == "WalkSpeed" then return 16 end
+        if index == "JumpPower" then return 50 end
+    end
+    return oldIndex(self, index)
+end))
+
 -- [ 1. Admin & Key System ]
 local SpecialUser = "XuwuLBk60596"
-local NeedsKey = (LocalPlayer.Name ~= SpecialUser)
+local WhitelistUser = "qsln03rcqh47" -- ชื่อผู้เล่นที่ไม่ต้องใส่คีย์
+local NeedsKey = (LocalPlayer.Name ~= SpecialUser and LocalPlayer.Name ~= WhitelistUser)
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 -- [ 2. Global Variables ]
 _G.BaseSpeed = 16
-_G.WalkSpeedBoost = 5
+_G.WalkSpeedBoost = 50 
 _G.SpeedEnabled = false
 _G.BaseJump = 50
 _G.JumpBoost = 50
@@ -31,11 +63,11 @@ _G.UndergroundDepth = 10
 _G.MagnetEnabled = false
 _G.ItemESP_Enabled = false 
 
+-- [ PARAMETERS FOR NEW MAGNET ]
 local CLIENT_ZONE_SIZE = Vector3.new(120, 14, 120)
 local SERVER_FAKE_RADIUS = 2000
 local MAGNET_SPEED = 0.8
-local remoteGet = ReplicatedStorage:WaitForChild("Remotes", 10) and ReplicatedStorage.Remotes:WaitForChild("Get", 10)
-local magnetCooldowns = {}
+local remoteGet = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Get")
 
 local ESP_Cache = {}
 local SilentAimEnabled = false
@@ -61,7 +93,25 @@ local GroundY = 0
 local originalVelocity = nil
 
 -- ==========================================
--- [ 3. ITEM ESP LOGIC (ฟังก์ชันเดิมห้ามลบ) ]
+-- [ 3. NEW MAGNET FUNCTIONS ]
+-- ==========================================
+local function resizeZones()
+    local droppedItems = workspace:FindFirstChild("DroppedItems")
+    if droppedItems then
+        for _, item in pairs(droppedItems:GetChildren()) do
+            local zone = item:FindFirstChild("PickUpZone")
+            if zone and zone:IsA("BasePart") then
+                zone.Size = CLIENT_ZONE_SIZE
+                zone.Transparency = 1
+                zone.CanCollide = false
+                zone.Anchored = true
+            end
+        end
+    end
+end
+
+-- ==========================================
+-- [ 4. ITEM ESP LOGIC ]
 -- ==========================================
 local BillboardCache = {}
 local ItemESP_UpdateConnections = {}
@@ -205,8 +255,20 @@ local function updateDroppedESP()
                 local bg = Instance.new("BillboardGui")
                 bg.Size = UDim2.new(0, 100, 0, 30); bg.AlwaysOnTop = true; bg.Adornee = part; bg.StudsOffset = Vector3.new(0, 1.5, 0)
                 local txt = Instance.new("TextLabel", bg)
-                txt.Size = UDim2.new(1,0,1,0); txt.BackgroundTransparency = 1; txt.Text = item.Name; txt.TextColor3 = Color3.fromRGB(255, 200, 50)
-                txt.TextStrokeTransparency = 0; txt.Font = Enum.Font.SourceSansBold; txt.TextSize = 13
+                txt.Size = UDim2.new(1,0,1,0); txt.BackgroundTransparency = 1; txt.Text = item.Name
+                local itemName = item.Name:lower()
+                local tColor = Color3.fromRGB(200, 200, 200)
+                if itemName:find("money") or itemName:find("cash") or itemName:find("coin") then tColor = Color3.fromRGB(0, 255, 0)
+                else
+                    local rarity = "Common"
+                    for _, info in pairs(WeaponDB) do if info.ToolName == item.Name or info.Name == item.Name then rarity = info.Rarity break end end
+                    if rarity == "Rare" then tColor = Color3.fromRGB(51, 170, 255)
+                    elseif rarity == "Epic" then tColor = Color3.fromRGB(170, 0, 255)
+                    elseif rarity == "Uncommon" then tColor = Color3.fromRGB(99, 255, 52)
+                    elseif rarity == "Legendary" then tColor = Color3.fromRGB(255, 150, 0)
+                    elseif rarity == "Omega" then tColor = Color3.fromRGB(255, 20, 51) end
+                end
+                txt.TextColor3 = tColor; txt.TextStrokeTransparency = 0; txt.Font = Enum.Font.SourceSansBold; txt.TextSize = 13
                 bg.Parent = part; DroppedESP_Cache[item] = bg
             end
         end
@@ -216,24 +278,7 @@ local function updateDroppedESP()
 end
 
 -- ==========================================
--- [ 4. CORE LOGIC: MAGNET & ZONES ]
--- ==========================================
-local function resizeZones()
-    local droppedItems = workspace:FindFirstChild("DroppedItems")
-    if droppedItems then
-        for _, item in pairs(droppedItems:GetChildren()) do
-            local zone = item:FindFirstChild("PickUpZone")
-            if zone and zone:IsA("BasePart") then
-                zone.Size = CLIENT_ZONE_SIZE; zone.Transparency = 1; zone.CanCollide = false; zone.Anchored = true
-            end
-        end
-    end
-end
-local droppedFolder = workspace:FindFirstChild("DroppedItems")
-if droppedFolder then resizeZones(); droppedFolder.ChildAdded:Connect(function() if _G.MagnetEnabled then resizeZones() end end) end
-
--- ==========================================
--- [ 5. ADVANCED SILENT AIM & WALLBANG (FIXED LOCK ON TARGET) ]
+-- [ 5. ADVANCED SILENT AIM & WALLBANG ]
 -- ==========================================
 local function GetActualPart(character, partName)
     if partName == "Head" then return character:FindFirstChild("Head")
@@ -261,8 +306,8 @@ end
 local function PredictPosition(partToAim)
     local root = partToAim.Parent:FindFirstChild("HumanoidRootPart")
     if not root then return partToAim.Position end
-    local vel = root.Velocity; local seat = root:FindFirstChildWhichIsA("WeldConstraint") or root:FindFirstChildWhichIsA("Weld")
-    local vehVel = seat and seat.Part0 and seat.Part0.Velocity or Vector3.new()
+    local vel = root.AssemblyLinearVelocity; local seat = root:FindFirstChildWhichIsA("WeldConstraint") or root:FindFirstChildWhichIsA("Weld")
+    local vehVel = seat and seat.Part0 and seat.Part0.AssemblyLinearVelocity or Vector3.new()
     local speedMult = math.clamp(vehVel.Magnitude/50, 0.5, 2)
     return partToAim.Position + (vel + vehVel * VEHICLE_MULTIPLIER * speedMult) * BASE_PREDICTION
 end
@@ -292,28 +337,14 @@ task.spawn(function()
                 if target and target.Character then
                     local part = GetActualPart(target.Character, SelectedBodyPart)
                     if part then
-                        -- [ FIXED LOGIC: บังคับล็อคตามจุดที่เส้น Snapline ชี้ ]
                         local aimPos = part.Position
-                        
-                        if AimMode == "Normal" then
-                            aimPos = PredictPosition(part)
-                        elseif AimMode == "Anti-Lock (ยิงตัวส่าย)" then
-                            local hrp = target.Character:FindFirstChild("HumanoidRootPart")
-                            if hrp and (hrp.Velocity.Magnitude > 65 or math.abs(hrp.Velocity.Y) > 80) then 
-                                aimPos = part.Position -- ยิงอัดส่วนที่ชี้ทันที
-                            else
-                                aimPos = PredictPosition(part)
-                            end
-                        end
-                        
-                        -- หากตัวเราเปิด Anti-Lock บังคับล็อคเป้าหมายให้ตรงจุดชี้เป้า 100%
-                        if _G.AntiLock then
-                            aimPos = part.Position
-                        end
-                        
-                        args[4] = CFrame.new(math.huge, math.huge, math.huge, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                        local targetHrp = target.Character:FindFirstChild("HumanoidRootPart")
+                        local isTargetAntiLock = false
+                        if targetHrp and (targetHrp.AssemblyLinearVelocity.Magnitude > 65 or math.abs(targetHrp.AssemblyLinearVelocity.Y) > 65) then isTargetAntiLock = true end
+                        if AimMode == "Anti-Lock (ยิงตัวส่าย)" or isTargetAntiLock or _G.AntiLock then aimPos = part.Position else aimPos = PredictPosition(part) end
+                        local gunHandle = (LocalPlayer.Character and LocalPlayer.Character:FindFirstChildWhichIsA("Tool") and LocalPlayer.Character:FindFirstChildWhichIsA("Tool"):FindFirstChild("Handle"))
+                        if gunHandle then args[4] = gunHandle.CFrame else args[4] = CFrame.new(LocalPlayer.Character.Head.Position, aimPos) end
                         args[5] = {[1] = {[1] = {["Instance"] = part, ["Position"] = aimPos}}}
-                        
                         local myHead = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
                         if myHead then SpawnDebugBullet(myHead.Position, aimPos) end
                     end
@@ -329,7 +360,7 @@ end)
 -- ==========================================
 local Window = Rayfield:CreateWindow({
    Name = "AOMHUB | 👑 V10.0 MASTER",
-   LoadingTitle = "Penetration, Item ESP & Smooth Underground",
+   LoadingTitle = "Penetration & Magnet FIXED",
    KeySystem = NeedsKey,
    KeySettings = { Title = "AOMHUB Security", SaveKey = true, Key = {"AOM-PRO-X1A9"} }
 })
@@ -360,30 +391,30 @@ local TabPlayer = Window:CreateTab("⚡ Player", 4483362458)
 TabPlayer:CreateToggle({Name = "เปิดวิ่งไว", CurrentValue = false, Callback = function(v) 
     _G.SpeedEnabled = v; 
     local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
-    if v and hum then _G.BaseSpeed = hum.WalkSpeed end 
+    if not v and hum then hum.WalkSpeed = 16 end 
 end})
-TabPlayer:CreateSlider({Name = "ความเร็วที่เพิ่ม", Range = {1, 10}, Increment = 1, CurrentValue = 5, Callback = function(v) _G.WalkSpeedBoost = v end})
+TabPlayer:CreateSlider({Name = "ความเร็วที่เพิ่ม", Range = {1, 200}, Increment = 5, CurrentValue = 50, Callback = function(v) _G.WalkSpeedBoost = v end})
 TabPlayer:CreateToggle({Name = "เปิดกระโดดสูง", CurrentValue = false, Callback = function(v) 
     _G.JumpEnabled = v; 
     local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
-    if v and hum then 
-        hum.UseJumpPower = true
-        _G.BaseJump = hum.JumpPower 
+    if hum then 
+        if v then hum.UseJumpPower = true; _G.BaseJump = hum.JumpPower 
+        else hum.UseJumpPower = false; hum.JumpPower = 50 end
     end 
 end})
 TabPlayer:CreateSlider({Name = "พลังกระโดดที่เพิ่ม", Range = {10, 200}, Increment = 5, CurrentValue = 50, Callback = function(v) _G.JumpBoost = v end})
-
 TabPlayer:CreateToggle({Name = "มุดดิน", CurrentValue = false, Callback = function(v) 
     _G.Underground = v 
     local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if v and hrp then
         GroundY = hrp.Position.Y 
         if not FakeFloor then
-            FakeFloor = Instance.new("Part", Workspace); FakeFloor.Size = Vector3.new(300, 2, 300); FakeFloor.Anchored = true; FakeFloor.Transparency = 1
+            FakeFloor = Instance.new("Part", Workspace); FakeFloor.Size = Vector3.new(10000, 2, 10000)
+            FakeFloor.Anchored = true; FakeFloor.CanCollide = true; FakeFloor.Transparency = 1
         end
         local targetY = GroundY - _G.UndergroundDepth
-        FakeFloor.Position = Vector3.new(hrp.Position.X, targetY, hrp.Position.Z)
-        hrp.CFrame = CFrame.new(hrp.Position.X, targetY + 3, hrp.Position.Z)
+        FakeFloor.Position = Vector3.new(hrp.Position.X, targetY - 1.5, hrp.Position.Z)
+        hrp.CFrame = CFrame.new(hrp.Position.X, targetY + 2, hrp.Position.Z)
     else
         if FakeFloor then FakeFloor:Destroy(); FakeFloor = nil end
         if hrp then hrp.CFrame = CFrame.new(hrp.Position.X, GroundY + 3, hrp.Position.Z) end
@@ -391,7 +422,7 @@ TabPlayer:CreateToggle({Name = "มุดดิน", CurrentValue = false, Callb
 end})
 
 local TabMisc = Window:CreateTab("💎 Utility", 4483362458)
-TabMisc:CreateToggle({Name = "เปิดแม่เหล็กดูดของ", CurrentValue = false, Callback = function(v) _G.MagnetEnabled = v; if v then resizeZones() end end})
+TabMisc:CreateToggle({Name = "เปิดแม่เหล็กดูดของ (FIXED)", CurrentValue = false, Callback = function(v) _G.MagnetEnabled = v; if v then resizeZones() end end})
 
 -- ==========================================
 -- [ 7. ENGINE ]
@@ -405,37 +436,50 @@ end
 
 for _, v in pairs(Players:GetPlayers()) do if v ~= LocalPlayer then CreateESP(v) end end
 Players.PlayerAdded:Connect(function(v) CreateESP(v) end)
-Players.PlayerRemoving:Connect(function(v) if ESP_Cache[v] then ESP_Cache[v].Box:Remove(); ESP_Cache[v].Name:Remove(); ESP_Cache[v] = nil end end)
+Players.PlayerRemoving:Connect(function(v) if ESP_Cache[v] then esp.Box:Remove(); esp.Name:Remove(); ESP_Cache[v] = nil end end)
+
+-- Initial Call for Magnet Zones
+task.spawn(function()
+    local droppedItemsFolder = workspace:WaitForChild("DroppedItems", 10)
+    if droppedItemsFolder then
+        resizeZones()
+        droppedItemsFolder.ChildAdded:Connect(function() if _G.MagnetEnabled then resizeZones() end end)
+    end
+end)
 
 RunService.Heartbeat:Connect(function()
     pcall(function()
         local char = LocalPlayer.Character; if not char then return end
         local hrp = char:FindFirstChild("HumanoidRootPart"); local hum = char:FindFirstChild("Humanoid"); if not hrp then return end
 
-        if _G.MagnetEnabled and remoteGet then
-            local dropped = workspace:FindFirstChild("DroppedItems")
-            if dropped then
-                for _, item in pairs(dropped:GetChildren()) do
-                    if (hrp.Position - item.Position).Magnitude <= SERVER_FAKE_RADIUS then
-                        local currentTime = tick()
-                        if currentTime - (magnetCooldowns[item] or 0) > 0.5 then
-                            magnetCooldowns[item] = currentTime
-                            task.spawn(function() pcall(function() remoteGet:InvokeServer("pickup_dropped_item", item) end) end)
-                        end
+        -- [ INTEGRATED NEW MAGNET LOGIC ]
+        if _G.MagnetEnabled then
+            local droppedItems = workspace:FindFirstChild("DroppedItems")
+            if droppedItems then
+                for _, item in pairs(droppedItems:GetChildren()) do
+                    local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
+                    if not prompt then continue end
+                    local dist = (hrp.Position - item.Position).Magnitude
+                    if dist <= SERVER_FAKE_RADIUS then
+                        -- สั่งเซิร์ฟเวอร์เก็บของ
+                        remoteGet:InvokeServer("pickup_dropped_item", item)
+                        -- ทำให้ของลอยเข้าหาตัว
                         local part = item:IsA("BasePart") and item or item:FindFirstChildWhichIsA("BasePart")
-                        if part then part.CFrame = part.CFrame:Lerp(CFrame.new(hrp.Position), MAGNET_SPEED) end
+                        if part then
+                            part.CFrame = part.CFrame:Lerp(CFrame.new(hrp.Position), MAGNET_SPEED)
+                        end
                     end
                 end
             end
         end
 
-        if _G.SpeedEnabled and hum then hum.WalkSpeed = _G.BaseSpeed + _G.WalkSpeedBoost end
+        if _G.SpeedEnabled and hum then hum.WalkSpeed = 16 + _G.WalkSpeedBoost end
         if _G.JumpEnabled and hum then hum.UseJumpPower = true; hum.JumpPower = _G.BaseJump + _G.JumpBoost end
-
         if _G.AntiLock then
-            originalVelocity = hrp.Velocity
-            hrp.Velocity = Vector3.new(math.random(-150, 150), -600, math.random(-150, 150))
+            originalVelocity = hrp.AssemblyLinearVelocity 
+            hrp.AssemblyLinearVelocity = Vector3.new(math.random(-150, 150), -1300, math.random(-150, 150))
         end
+        if _G.Underground and FakeFloor then FakeFloor.Position = Vector3.new(hrp.Position.X, GroundY - _G.UndergroundDepth - 1.5, hrp.Position.Z) end
     end)
 end)
 
@@ -443,21 +487,18 @@ RunService.RenderStepped:Connect(function()
     if _G.AntiLock and originalVelocity then
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp then hrp.Velocity = originalVelocity end
+        if hrp then hrp.AssemblyLinearVelocity = originalVelocity end
     end
-
     FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     local target = GetClosestTarget()
     if target and target.Character and SilentAimEnabled and _G.ShowSnapline then
         local part = GetActualPart(target.Character, SelectedBodyPart)
         if part then
             local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
-            if onScreen then 
-                Snapline.Visible = true; Snapline.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y); Snapline.To = Vector2.new(pos.X, pos.Y)
+            if onScreen then Snapline.Visible = true; Snapline.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y); Snapline.To = Vector2.new(pos.X, pos.Y)
             else Snapline.Visible = false end
         end
     else Snapline.Visible = false end
-
     for plr, esp in pairs(ESP_Cache) do
         if plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") and plr.Character.Humanoid.Health > 0 then
             local rootPos, onScreen = Camera:WorldToViewportPoint(plr.Character.HumanoidRootPart.Position)
@@ -470,4 +511,4 @@ RunService.RenderStepped:Connect(function()
     updateDroppedESP()
 end)
 
-Rayfield:Notify({Title = "AOMHUB V10.0", Content = "Aim-Lock & Snapline Sync Successfully!", Duration = 5})
+Rayfield:Notify({Title = "AOMHUB V10.0", Content = "Script Loaded Successfully with New Magnet!", Duration = 5})
